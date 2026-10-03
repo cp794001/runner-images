@@ -1,0 +1,102 @@
+# TEMPORARY - validation aid for #14491 / PR #14493.
+# Runs on the hosted windows-11-arm runner (current production image, i.e. BEFORE the
+# fix). Confirms the aarch64-pc-windows-gnullvm Rust target is absent today, runs the
+# exact command this PR adds to Install-Rust.ps1, proves cargo can compile a crate
+# against the target (cargo check needs no linker), then best-effort reproduces the
+# reporter's full MSYS2 CLANGARM64 --release link.
+# Delete this file before the PR is merged.
+
+name: Validate Rust gnullvm ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'validate/rust-gnullvm-arm64*'
+
+jobs:
+  gnullvm:
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Confirm arch and that the gnullvm target is absent today
+        shell: pwsh
+        run: |
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          Write-Host "PROCESSOR_ARCHITECTURE = $env:PROCESSOR_ARCHITECTURE"
+          rustup --version
+          rustc --version
+          Write-Host "--- installed targets before ---"
+          $before = rustup target list --installed
+          $before | ForEach-Object { Write-Host "  $_" }
+          if ($before -contains "aarch64-pc-windows-gnullvm") {
+            Write-Error "gnullvm target already present - unexpected on the current image"
+            exit 1
+          }
+          Write-Host "OK - aarch64-pc-windows-gnullvm is NOT installed (matches the issue)"
+
+      - name: Run the exact command this PR adds to Install-Rust.ps1
+        shell: pwsh
+        run: |
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          rustup target add aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { throw "rustup target add failed ($LASTEXITCODE)" }
+          $after = rustup target list --installed
+          if ($after -notcontains "aarch64-pc-windows-gnullvm") {
+            throw "target still not installed after add"
+          }
+          Write-Host "OK - aarch64-pc-windows-gnullvm installed"
+
+      - name: Compile a crate against the target (cargo check - no linker needed)
+        shell: pwsh
+        run: |
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          cargo new arm64-oss-bridge --bin
+          Set-Location arm64-oss-bridge
+          Add-Content Cargo.toml 'libc = "0.2"'
+          cargo check --target aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { throw "cargo check against gnullvm failed ($LASTEXITCODE)" }
+          Write-Host "OK - crate compiles against aarch64-pc-windows-gnullvm std"
+
+      - name: Set up MSYS2 CLANGARM64 (reporter's toolchain) - best effort
+        id: msys2
+        continue-on-error: true
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-cc
+            mingw-w64-clang-aarch64-clang
+
+      - name: Full cargo build --release for gnullvm (reporter's exact scenario) - best effort
+        if: steps.msys2.outcome == 'success'
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          export PATH="/c/Users/runneradmin/.cargo/bin:$PATH"
+          cd arm64-oss-bridge
+          cargo build --target aarch64-pc-windows-gnullvm --release
+          ls -la target/aarch64-pc-windows-gnullvm/release/
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          $installed = (rustup target list --installed) -contains "aarch64-pc-windows-gnullvm"
+          $rows = @(
+            "### Rust gnullvm ARM64 validation",
+            "",
+            "| Check | Result |",
+            "| --- | --- |",
+            "| Runner | windows-11-arm |",
+            "| Target present *before* fix | No (as reported in #14491) |",
+            "| ``rustup target add aarch64-pc-windows-gnullvm`` | $(if ($installed) {'succeeded'} else {'FAILED'}) |",
+            "| ``cargo check --target aarch64-pc-windows-gnullvm`` | see job log |",
+            "| Full MSYS2 CLANGARM64 --release build | best-effort, see job log |"
+          )
+          $rows -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
