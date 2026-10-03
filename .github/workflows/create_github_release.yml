@@ -1,4 +1,4 @@
-name: Create GitHub release
+.github/workflows/validate-rust-gnullvm-arm64.ymlhttps://github.com/actions/runner-images/actions/runs/36123393221/job/108033891899#step:2:1images/windows/scripts/build/Install-Rust.ps1images/windows/scripts/tests/Rust.Tests.ps1name: Create GitHub release
 
 on:.github/workflows/validate-rust-gnullvm-arm64.yml
   repository_dispatch:
