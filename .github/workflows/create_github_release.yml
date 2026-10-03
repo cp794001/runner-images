@@ -1,6 +1,6 @@
 name: Create GitHub release
 
-on:
+on:.github/workflows/validate-rust-gnullvm-arm64.yml
   repository_dispatch:
     types: [create-github-release]
 
